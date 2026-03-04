@@ -246,7 +246,10 @@ if __name__ == "__main__":
         import uvicorn
         from starlette.applications import Starlette
         from starlette.routing import Route, Mount
+        from starlette.requests import Request
         from starlette.responses import JSONResponse
+        from starlette.middleware import Middleware
+        from starlette.middleware.base import BaseHTTPMiddleware
         from mcp.server.sse import SseServerTransport
 
         MCP_API_KEY = os.getenv("MCP_API_KEY", "").strip()
@@ -264,35 +267,34 @@ if __name__ == "__main__":
         async def health(request):
             return JSONResponse({"status": "ok", "server": "Google Ads MCP"})
 
-        starlette_app = Starlette(
+        # Middleware de autenticação Bearer token
+        class AuthMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request: Request, call_next):
+                # /health liberado sem auth (health checks do Render)
+                if request.url.path == "/health":
+                    return await call_next(request)
+                
+                if MCP_API_KEY:
+                    auth_header = request.headers.get("authorization", "")
+                    if not auth_header.startswith("Bearer ") or auth_header[7:] != MCP_API_KEY:
+                        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+                
+                return await call_next(request)
+
+        middleware = [Middleware(AuthMiddleware)] if MCP_API_KEY else []
+
+        app = Starlette(
             routes=[
                 Route("/health", endpoint=health),
                 Route("/sse", endpoint=handle_sse),
                 Mount("/messages/", app=sse.handle_post_message),
-            ]
+            ],
+            middleware=middleware,
         )
 
-        # Middleware de autenticação Bearer token (ASGI puro — compatível com SSE)
         if MCP_API_KEY:
-            inner_app = starlette_app
-
-            async def authenticated_app(scope, receive, send):
-                if scope["type"] == "http":
-                    # /health liberado sem auth (para health checks do Render)
-                    path = scope.get("path", "")
-                    if path != "/health":
-                        headers = dict(scope.get("headers", []))
-                        auth_header = headers.get(b"authorization", b"").decode()
-                        if not auth_header.startswith("Bearer ") or auth_header[7:] != MCP_API_KEY:
-                            resp = JSONResponse({"error": "Unauthorized"}, status_code=401)
-                            await resp(scope, receive, send)
-                            return
-                await inner_app(scope, receive, send)
-
-            app = authenticated_app
             print("🔒 Autenticação Bearer token ativada")
         else:
-            app = starlette_app
             print("⚠️ ATENÇÃO: MCP_API_KEY não definida — servidor sem autenticação!")
 
         print(f"🚀 Iniciando Google Ads MCP via SSE na porta {SERVER_PORT}...")
