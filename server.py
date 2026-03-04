@@ -55,6 +55,12 @@ def get_google_ads_client():
         "refresh_token": os.environ.get("GOOGLE_ADS_REFRESH_TOKEN"),
         "use_proto_plus": True
     }
+    
+    login_id = os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID")
+    if login_id:
+        # Remove hífens se houver
+        credentials["login_customer_id"] = login_id.replace("-", "")
+
     _google_ads_client = GoogleAdsClient.load_from_dict(credentials)
     return _google_ads_client
 
