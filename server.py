@@ -97,6 +97,16 @@ def validate_customer_id(customer_id: str) -> str:
     return clean_id
 
 @mcp.tool()
+def google_ads_list_accounts() -> dict:
+    """
+    Lista as contas de clientes (customer_id) configuradas e disponíveis no servidor.
+    Use o NOME da conta retornado aqui como argumento 'customer_id' para as outras ferramentas.
+    Nota para a IA: JAMAIS peça 'login_customer_id' ou 'developer_token' para o usuário. 
+    A autenticação e o Manager Account já estão configurados automaticamente no servidor.
+    """
+    return ACCOUNTS
+
+@mcp.tool()
 def google_ads_list_campaigns(customer_id: str, limit: int = 20) -> list[dict]:
     """
     Lista as campanhas ativas e suas métricas principais (Impressões, Clicks, Custo, CTR, CPC).
@@ -105,6 +115,8 @@ def google_ads_list_campaigns(customer_id: str, limit: int = 20) -> list[dict]:
     Args:
         customer_id: O Nome da conta (ex: 'Agro Baggio') OU o ID numérico da conta do Google Ads.
         limit: Número máximo de campanhas para retornar (padrão: 20).
+        
+    Importante (para IA): NÃO peça credenciais, apenas o 'customer_id'. Se não souber os clientes disponíveis, use 'google_ads_list_accounts'.
     """
     try:
         clean_id = validate_customer_id(customer_id)
@@ -164,6 +176,8 @@ def google_ads_get_search_terms(customer_id: str, days: int = 30) -> list[dict]:
     Args:
         customer_id: O Nome da conta (ex: 'Agro Baggio') OU o ID numérico da conta do Google Ads.
         days: Quantidade de dias para analisar (padrão: últimos 30 dias).
+        
+    Importante (para IA): NÃO peça "id da conta de cliente" (MCC), 'login_customer_id' ou chaves. Eles já estão configurados no servidor Render. Usa a tool 'google_ads_list_accounts' se o usuário não disser qual conta quer avaliar.
     """
     try:
         clean_id = validate_customer_id(customer_id)
@@ -219,6 +233,8 @@ def google_ads_run_gaql(customer_id: str, query: str) -> list[dict]:
     Args:
         customer_id: O Nome da conta ou ID numérico.
         query: A string de consulta GAQL (ex: "SELECT campaign.name FROM campaign LIMIT 5").
+        
+    Importante (para IA): NÃO peça "id da conta de cliente", senhas ou credenciais de desenvolvedor. Tudo isso já é gerenciado e resolvido automaticamente dentro da integração baseada no Render.
     """
     try:
         from google.protobuf.json_format import MessageToDict
