@@ -6,11 +6,36 @@ from mcp.server.fastmcp import FastMCP
 from google.ads.googleads.client import GoogleAdsClient
 from google.protobuf.json_format import MessageToDict
 
-# Inicializa o servidor MCP
-mcp = FastMCP("Google Ads")
+# --- CONFIGURAÇÃO DE CONTAS ---
+# Prioridade: env var ACCOUNTS_JSON > arquivo accounts.json
+ACCOUNTS_JSON_ENV = os.getenv("ACCOUNTS_JSON")
 
-# Caminho para o arquivo de mapeamento de contas
-ACCOUNTS_FILE = os.path.join(os.path.dirname(__file__), "accounts.json")
+if ACCOUNTS_JSON_ENV:
+    # Deploy (Render, Railway, etc.) — carrega do env var
+    try:
+        ACCOUNTS = json.loads(ACCOUNTS_JSON_ENV)
+        print(f"✅ Contas carregadas do env var ({len(ACCOUNTS)} contas)")
+    except json.JSONDecodeError:
+        print("⚠️ Erro: ACCOUNTS_JSON não é um JSON válido. Iniciando com lista vazia.")
+        ACCOUNTS = {}
+else:
+    # Local — carrega do arquivo
+    ACCOUNTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "accounts.json")
+    try:
+        with open(ACCOUNTS_FILE, 'r', encoding='utf-8') as f:
+            ACCOUNTS = json.load(f)
+        print(f"✅ Contas carregadas do arquivo ({len(ACCOUNTS)} contas)")
+    except FileNotFoundError:
+        print(f"⚠️ Arquivo não encontrado: {ACCOUNTS_FILE}. Iniciando com lista vazia.")
+        ACCOUNTS = {}
+    except json.JSONDecodeError:
+        print(f"⚠️ Erro: {ACCOUNTS_FILE} não é um JSON válido. Iniciando com lista vazia.")
+        ACCOUNTS = {}
+
+# Configura host/port para deploy (Render injeta PORT automaticamente)
+SERVER_PORT = int(os.getenv("PORT", 8000))
+mcp = FastMCP("Google Ads", host="0.0.0.0", port=SERVER_PORT)
+
 
 @functools.lru_cache(maxsize=None)
 def get_google_ads_client():
@@ -36,25 +61,17 @@ def format_money(micros: int) -> str:
 def validate_customer_id(customer_id: str) -> str:
     """
     Resolve o ID da conta. Aceita:
-    1. Nome da conta (como definido em accounts.json)
+    1. Nome da conta (como definido em accounts.json ou ACCOUNTS_JSON)
     2. ID numérico (com ou sem hífens)
     """
     identifier = str(customer_id).strip()
     
-    # 1. Tenta buscar pelo nome no arquivo accounts.json
-    try:
-        if os.path.exists(ACCOUNTS_FILE):
-            with open(ACCOUNTS_FILE, 'r', encoding='utf-8') as f:
-                accounts = json.load(f)
-                # Busca case-insensitive
-                accounts_map = {k.lower(): v for k, v in accounts.items()}
-                
-                if identifier.lower() in accounts_map:
-                    raw_id = accounts_map[identifier.lower()]
-                    return re.sub(r"\D", "", raw_id)
-    except Exception as e:
-        # Em caso de erro na leitura do arquivo, segue tentando usar como ID numérico
-        pass
+    # 1. Tenta buscar pelo nome no dicionário ACCOUNTS
+    if ACCOUNTS:
+        accounts_map = {k.lower(): v for k, v in ACCOUNTS.items()}
+        if identifier.lower() in accounts_map:
+            raw_id = accounts_map[identifier.lower()]
+            return re.sub(r"\D", "", raw_id)
 
     # 2. Tenta tratar como ID numérico direto
     clean_id = re.sub(r"\D", "", identifier)
@@ -216,4 +233,61 @@ def google_ads_run_gaql(customer_id: str, query: str) -> list[dict]:
 
 # Inicia o servidor
 if __name__ == "__main__":
-    mcp.run()
+    # Se PORT está definido (Render/Cloud), usa SSE com auth. Senão, usa stdio (local).
+    if os.getenv("PORT"):
+        import uvicorn
+        from starlette.applications import Starlette
+        from starlette.routing import Route, Mount
+        from starlette.responses import JSONResponse
+        from mcp.server.sse import SseServerTransport
+
+        MCP_API_KEY = os.getenv("MCP_API_KEY", "").strip()
+        sse = SseServerTransport("/messages/")
+
+        async def handle_sse(request):
+            async with sse.connect_sse(
+                request.scope, request.receive, request._send
+            ) as (read_stream, write_stream):
+                await mcp._mcp_server.run(
+                    read_stream, write_stream,
+                    mcp._mcp_server.create_initialization_options()
+                )
+
+        async def health(request):
+            return JSONResponse({"status": "ok", "server": "Google Ads MCP"})
+
+        starlette_app = Starlette(
+            routes=[
+                Route("/health", endpoint=health),
+                Route("/sse", endpoint=handle_sse),
+                Mount("/messages/", app=sse.handle_post_message),
+            ]
+        )
+
+        # Middleware de autenticação Bearer token (ASGI puro — compatível com SSE)
+        if MCP_API_KEY:
+            inner_app = starlette_app
+
+            async def authenticated_app(scope, receive, send):
+                if scope["type"] == "http":
+                    # /health liberado sem auth (para health checks do Render)
+                    path = scope.get("path", "")
+                    if path != "/health":
+                        headers = dict(scope.get("headers", []))
+                        auth_header = headers.get(b"authorization", b"").decode()
+                        if not auth_header.startswith("Bearer ") or auth_header[7:] != MCP_API_KEY:
+                            resp = JSONResponse({"error": "Unauthorized"}, status_code=401)
+                            await resp(scope, receive, send)
+                            return
+                await inner_app(scope, receive, send)
+
+            app = authenticated_app
+            print("🔒 Autenticação Bearer token ativada")
+        else:
+            app = starlette_app
+            print("⚠️ ATENÇÃO: MCP_API_KEY não definida — servidor sem autenticação!")
+
+        print(f"🚀 Iniciando Google Ads MCP via SSE na porta {SERVER_PORT}...")
+        uvicorn.run(app, host="0.0.0.0", port=SERVER_PORT)
+    else:
+        mcp.run()  # stdio para uso local

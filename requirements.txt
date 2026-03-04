@@ -1,0 +1,6 @@
+mcp
+google-ads
+protobuf
+uvicorn
+starlette
+sse-starlette
