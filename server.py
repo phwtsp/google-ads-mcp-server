@@ -1,10 +1,7 @@
 import os
 import re
 import json
-import functools
 from mcp.server.fastmcp import FastMCP
-from google.ads.googleads.client import GoogleAdsClient
-from google.protobuf.json_format import MessageToDict
 
 # --- CONFIGURAÇÃO DE CONTAS ---
 # Prioridade: env var ACCOUNTS_JSON > arquivo accounts.json
@@ -37,12 +34,20 @@ SERVER_PORT = int(os.getenv("PORT", 8000))
 mcp = FastMCP("Google Ads", host="0.0.0.0", port=SERVER_PORT)
 
 
-@functools.lru_cache(maxsize=None)
+# Cache global para o cliente Google Ads (lazy loading)
+_google_ads_client = None
+
 def get_google_ads_client():
     """
     Cria e coloca em cache o cliente do Google Ads usando variáveis de ambiente.
-    Isso evita recriar o cliente a cada requisição.
+    Importa o google-ads apenas na primeira chamada (lazy loading).
     """
+    global _google_ads_client
+    if _google_ads_client is not None:
+        return _google_ads_client
+    
+    from google.ads.googleads.client import GoogleAdsClient
+    
     credentials = {
         "developer_token": os.environ.get("GOOGLE_ADS_DEVELOPER_TOKEN"),
         "client_id": os.environ.get("GOOGLE_ADS_CLIENT_ID"),
@@ -50,7 +55,8 @@ def get_google_ads_client():
         "refresh_token": os.environ.get("GOOGLE_ADS_REFRESH_TOKEN"),
         "use_proto_plus": True
     }
-    return GoogleAdsClient.load_from_dict(credentials)
+    _google_ads_client = GoogleAdsClient.load_from_dict(credentials)
+    return _google_ads_client
 
 def format_money(micros: int) -> str:
     """Converte micros para valor monetário formatado (R$)."""
@@ -209,6 +215,8 @@ def google_ads_run_gaql(customer_id: str, query: str) -> list[dict]:
         query: A string de consulta GAQL (ex: "SELECT campaign.name FROM campaign LIMIT 5").
     """
     try:
+        from google.protobuf.json_format import MessageToDict
+        
         clean_id = validate_customer_id(customer_id)
         client = get_google_ads_client()
         ga_service = client.get_service("GoogleAdsService")
