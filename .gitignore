@@ -1,0 +1,8 @@
+accounts.json
+mcp.json
+.cursor
+venv/
+__pycache__/
+*.pyc
+.env
+.DS_Store
