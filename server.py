@@ -34,10 +34,18 @@ else:
 # Configuração do servidor MCP
 SERVER_HOST = os.getenv("HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("PORT", 8000))
-MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio").strip().lower()
+# Configuração do transporte MCP
+# Se estivermos no Render ou houver uma porta definida, o padrão passa a ser HTTP
+_default_transport = "stdio"
+if os.getenv("RENDER") or os.getenv("PORT"):
+    _default_transport = "streamable-http"
+
+MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", _default_transport).strip().lower()
 MCP_MOUNT_PATH = os.getenv("MCP_MOUNT_PATH", "/mcp").strip() or "/mcp"
 if not MCP_MOUNT_PATH.startswith("/"):
     MCP_MOUNT_PATH = f"/{MCP_MOUNT_PATH}"
+
+print(f"🛠️ Configuração: Transporte={MCP_TRANSPORT} | Porta={SERVER_PORT} | Host={SERVER_HOST}")
 
 mcp = FastMCP(
     "Google Ads",
